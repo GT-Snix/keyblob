@@ -1,0 +1,34 @@
+# Design decisions
+
+> DRAFT written by Claude while the author was busy. Rewrite each point in your own words before publishing. You are the one who will be asked to defend them.
+
+**Unifying principle: when unsure, fail safe, not fail open.** For a security tool, an ugly output beats a leaked secret.
+
+1. **Return a clone, never mutate.** The app keeps using real values; only the log copy is masked.
+2. **Cycles: `[Circular]` via a path set (add on entry, delete on exit).** A cycle means meeting one of your own ancestors. An "ever seen" set wrongly flags shared references, because the shared object is still in the set after the first branch finishes. `try/finally` guarantees removal even if a getter throws.
+3. **Key-based matching, not value-based.** A value like `"k-123"` cannot be recognised as a secret, but a field called `apiKey` can. Predictable and fast. Cost: secrets inside strings are missed.
+4. **Whole-word matching after splitting camelCase/`_`/`-`.** Substring matching would mask `tokens_used`, `keyboard`, `author`. A false positive costs debugging clarity; a false negative leaks. Lean toward redacting, but not so far the logs are useless.
+5. **Adjacent-pair trick.** `X-API-KEY` splits into `x, api, key`; joining neighbours yields `apikey` without adding bare `key` to the list, which would mask `primaryKey`.
+6. **Sensitive check happens before reading the value.** A masked value is never read, so a throwing getter on a sensitive key is never invoked and cannot be mislabelled `[Unreadable]`.
+7. **Walk by default; pass through only a short list of value types.** Date, RegExp, ArrayBuffer, Buffer/typed arrays are returned as-is; everything else is walked. (An allowlist of walkable types is the alternative.) Forgetting a type in the pass-through list flattens it (ugly, safe). Forgetting one in an allowlist leaks secrets (class instances like ORM models are exactly what gets logged).
+8. **`util.types` instead of `instanceof` or `toString` tags.** `toString` tags can be spoofed with `Symbol.toStringTag` (a bypass in a security tool). `instanceof` fails across realms. `util.types.isDate` etc. check internal slots: unspoofable and realm-safe. (Earlier advice suggested `instanceof`; this is strictly better and still zero-dependency.)
+9. **Errors are special-cased.** `message`/`stack` are non-enumerable, so a naive walk turns every logged error into `{}`. We include name, message, stack, cause, errors and own props, and walk them. `message` is free text, so secrets inside it are not caught.
+10. **`defineProperty` for output keys.** Plain assignment of an own `__proto__` key (from `JSON.parse`) would change the output's prototype instead of creating a key.
+11. **Own enumerable string keys only.** Symbol and non-enumerable properties are dropped; prototype getters are never called.
+12. **`session` is in the list.** I first dropped it, but `session: { id }` then leaked (the id has no sensitive key name). Fail safe wins. (Its cost, masking `sessionTimeout`, is now removed by #22.)
+13. **The logger must never throw.** Depth capped at 100 (`[MaxDepth]`); `Array.isArray`, key listing and value reads are wrapped so hostile Proxies yield `[Unreadable]`. Found by stress test: a 21 KB JSON body nested 3,500 deep crashed it.
+14. **Linear-time key splitting.** The regex `([A-Z]+)([A-Z][a-z])` backtracks quadratically on long all-caps keys (7.7 s at 100k chars). Replaced with a lookahead version. Digits split from letters so `password2` is caught.
+15. **Functions become `[Function]`.** `console.log` prints a function's own props, so passing them through could leak.
+16. **Raw `req` is not supported.** `rawHeaders` is a flat array, so secrets sit under keys `"1"`, `"3"`; README tells users to log `{method, url, headers}`.
+17. **Total work is bounded, not just depth.** A depth cap alone still allows 2^100 nodes (two getters each returning a fresh object) or a 22-level diamond (10 s). A fixed budget of 10,000 visited objects returns `[Truncated]`. Primitives are not counted.
+18. **HTTP internals are masked by exact key.** `_header`, `rawHeaders`, `outputData` etc. hold secrets as raw text or flat lists, invisible to word matching. Found because axios-style errors carry `err.request`.
+19. **Array fast path excludes `__proto__`.** Plain assignment on arrays for speed, but the `__proto__` key still goes through `defineProperty`.
+20. **Options: `keys` and `allow`, nothing more.** Zero config means one dial setting for everyone, wrong for each team in a different direction. `keys` adds words matched like the built-ins; `allow` is an exact whole-key match and wins over everything, so a false positive can be fixed without weakening matching elsewhere. Custom `keys` ignore the metadata-suffix rule (#22): if you named it, you meant it.
+21. **Per-array cap (100, like `console.log`) on top of the global budget.** One shared budget spent depth-first let a 15k-row array blank out every object field after it. Capping each array keeps later fields and says how much was dropped (`[Truncated: N more items]`). The global 10,000-object budget stays as the backstop for hostile graphs.
+22. **Metadata suffixes are not masked by built-in words.** `passwordPolicy`, `sessionTimeout`, `tokenType` describe a secret rather than hold one. Only the last word counts, and the list avoids words that could name a container of secrets (`store`, `provider`, `url`, `id`, `expiry` are deliberately absent). This is another heuristic; `keys` overrides it.
+23. **Named `*Key` pairs instead of a trailing-`key` rule.** A "mask anything ending in key" rule needs an exception list (`primary`, `cache`, `sort`...), which is the same dial again. Listing known secret kinds (`encryptionkey`, `signingkey`, `hmackey`...) is predictable; everything else goes through `keys`.
+24. **One value check: connection-string passwords.** This bends "keys only". It is defensible because `scheme://user:pass@` is structured, not free text: anchored at the start of the string, linear time, keeps the rest of the URL readable. Free text is still never scanned.
+25. **`auth` matches only as the whole key.** `auth: 'user:pass'` and axios's `auth: {...}` are masked, but `authMethod` and `authProvider` are not.
+26. **Key decisions are cached per redactor.** Request logs repeat the same keys, and splitting with four regexes per key made redact 9x slower than `JSON.stringify`. The cache stops growing at 10,000 entries and skips keys over 200 chars so hostile input cannot fill memory. `createRedactor` exists so option users get a warm cache too.
+27. **Invalid options throw at setup.** A typo like `keys: 'password'` must fail loudly when the redactor is built, not silently mask nothing. Once built, redaction itself never throws.
+28. **Not in v1:** HMAC fingerprints (`[REDACTED:a3f9c1]`), Map/Set entries, value scanning beyond connection strings, browser builds.
