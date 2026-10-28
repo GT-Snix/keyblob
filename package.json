@@ -1,0 +1,29 @@
+{
+  "name": "keyblob",
+  "version": "1.0.0",
+  "description": "Return a redacted deep copy of any object so it is safe to log. Zero dependencies.",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "type": "commonjs",
+  "files": ["src"],
+  "sideEffects": false,
+  "keywords": ["redact", "mask", "secrets", "logging", "sanitize", "pii", "log", "security"],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/GT-Snix/keyblob.git" },
+  "homepage": "https://github.com/GT-Snix/keyblob#readme",
+  "bugs": { "url": "https://github.com/GT-Snix/keyblob/issues" },
+  "author": "GT-Snix",
+  "license": "MIT"
+}
