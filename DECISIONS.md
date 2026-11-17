@@ -32,3 +32,8 @@
 26. **Key decisions are cached per redactor.** Request logs repeat the same keys, and splitting with four regexes per key made redact 9x slower than `JSON.stringify`. The cache stops growing at 10,000 entries and skips keys over 200 chars so hostile input cannot fill memory. `createRedactor` exists so option users get a warm cache too.
 27. **Invalid options throw at setup.** A typo like `keys: 'password'` must fail loudly when the redactor is built, not silently mask nothing. Once built, redaction itself never throws.
 28. **Not in v1:** HMAC fingerprints (`[REDACTED:a3f9c1]`), Map/Set entries, value scanning beyond connection strings, browser builds.
+29. **`keyblob scan` checks values, `redact()` checks keys.** At runtime the key name is all you can trust; in source code a token's own format (`ghp_`, `AKIA`, `GOCSPX-`) is the strongest signal, so the scanner adds value rules on top of the same name rules. Reusing `createRedactor` for the name check keeps the two from ever disagreeing.
+30. **The scanner never prints the full secret.** Its output ends up in terminals, CI logs and screenshots; 4 characters and a length are enough to find the line.
+31. **The scanner fails closed.** If the hook cannot find keyblob it blocks the commit with an install hint rather than silently letting it through. `--no-verify` remains the explicit escape hatch, which is why the README also asks for a CI scan.
+32. **No "hide secrets in shipped code".** Obfuscating a secret the client must use only slows an attacker down. The tool says so plainly and points to keeping secrets server-side.
+

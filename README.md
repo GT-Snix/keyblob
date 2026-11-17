@@ -1,6 +1,6 @@
 # keyblob
 
-Return a redacted deep copy of any object so it is safe to log. Zero dependencies, Node.js >= 18.
+Keep secrets out of your logs and out of git. `redact()` returns a masked copy of any object so it is safe to log; `keyblob scan` blocks commits that contain API keys or passwords. Zero dependencies, Node.js >= 18.
 
 ```js
 const { redact } = require('keyblob');   // or: import { redact } from 'keyblob';
@@ -89,6 +89,40 @@ Read these. They are deliberate or accepted.
 - **Big inputs are truncated** by the limits. A getter that loops forever inside your own code cannot be interrupted.
 - **Node.js only.** It uses `node:util`. Bun and Deno's Node compatibility should work but are not tested; browsers and edge runtimes without Node APIs are not supported.
 - This reduces accidental leaks. It is not a substitute for keeping secrets out of logs at the source.
+
+## Keep secrets out of git: `keyblob scan`
+
+`redact()` protects your logs while the app runs. `keyblob scan` protects your repository before you push: it finds API keys, passwords and private keys in your files and blocks the commit.
+
+```sh
+npm install --save-dev keyblob
+npx keyblob hook install        # scan staged files before every git commit
+npx keyblob scan                # scan every file git would commit, any time
+```
+
+A blocked commit looks like this. The secret itself is never printed:
+
+```
+keyblob: found 1 possible secret
+
+  index.js:10:23  google-oauth-client-secret  GOCS… (35 chars)
+```
+
+Fix it by moving the value into an environment variable (a `.env` file listed in `.gitignore`, read with `process.env.NAME` and `node --env-file=.env`). If a real secret was already pushed, **rotate it**: deleting it in a later commit does not remove it from git history.
+
+What it finds:
+
+- **Known token formats, by value:** AWS, GitHub, GitLab, Google API keys and OAuth client secrets, OpenAI, Anthropic, Stripe live keys, Slack, npm tokens, JWTs, PEM private keys, and passwords in `scheme://user:pass@host` URLs.
+- **Hardcoded values under sensitive names**, using the same word rules as `redact()`: `clientSecret = "..."`, `"db_password": "..."`, and unquoted `API_TOKEN=...` in `.env`, YAML, INI, TOML and `.npmrc` files. Placeholders (`your-key-here`, `${VAR}`, `<token>`, `****`), env lookups and prose are skipped.
+- **Files that should never be committed:** `.env`, `.env.local` etc. (not `.env.example`), `id_rsa`, `*.key`, `*.p12`, `*.pfx`.
+
+False alarm? Put `keyblob-ignore` in a comment on that line, or list paths in a `.keyblobignore` file (gitignore-style globs, e.g. `test/fixtures/`). Inside a git repo the scan follows `.gitignore`, so a correctly ignored `.env` is not reported.
+
+A local hook can be skipped with `git commit --no-verify`, so also run `npx keyblob scan` in CI. It exits `1` when it finds something, `0` when clean, `2` on a usage error; `--json` gives machine-readable output.
+
+From code: `const { scanText } = require('keyblob/scan')` returns findings for a string; see `src/scan.d.ts`.
+
+**What no tool can do:** hide a secret from people who can run your code. Anything sent to the browser (frontend JavaScript, a mobile app bundle) can be read by its user, however it is encoded. Keep secrets on your server and let the browser call your server.
 
 ## Why not pino's `redact` / fast-redact?
 

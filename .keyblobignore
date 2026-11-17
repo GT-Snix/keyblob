@@ -1,0 +1,3 @@
+# Deliberately fake secrets used as test fixtures and documentation examples.
+test/
+DECISIONS.md

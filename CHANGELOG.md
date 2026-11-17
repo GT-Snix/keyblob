@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## 1.1.0
+
+- New `keyblob` CLI. `keyblob scan` finds secrets in files git would commit; `--staged` checks only the next commit; `--json` for CI.
+- `keyblob hook install` / `uninstall` adds a git pre-commit hook that blocks commits containing secrets. An existing non-keyblob hook is never overwritten.
+- Detects known token formats by value (AWS, GitHub, GitLab, Google, OpenAI, Anthropic, Stripe, Slack, npm, JWT, PEM private keys, URL passwords), hardcoded values under sensitive names (same rules as `redact()`), and committed `.env` / private key files.
+- Findings never print the full secret. `keyblob-ignore` on a line or a `.keyblobignore` file suppresses false alarms.
+- New `keyblob/scan` entry point with `scanText()` and `scanFileName()`, with TypeScript types.
+
 ## 1.0.0
 
 First public release.

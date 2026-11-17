@@ -1,29 +1,56 @@
 {
   "name": "keyblob",
-  "version": "1.0.0",
-  "description": "Return a redacted deep copy of any object so it is safe to log. Zero dependencies.",
+  "version": "1.1.0",
+  "description": "Keep secrets out of your logs (redact) and out of git (scan + pre-commit hook). Zero dependencies.",
   "main": "src/index.js",
   "types": "src/index.d.ts",
+  "bin": {
+    "keyblob": "bin/keyblob.js"
+  },
   "exports": {
     ".": {
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
     },
+    "./scan": {
+      "types": "./src/scan.d.ts",
+      "default": "./src/scan.js"
+    },
     "./package.json": "./package.json"
   },
   "type": "commonjs",
-  "files": ["src"],
+  "files": [
+    "src",
+    "bin"
+  ],
   "sideEffects": false,
-  "keywords": ["redact", "mask", "secrets", "logging", "sanitize", "pii", "log", "security"],
+  "keywords": [
+    "redact",
+    "mask",
+    "secrets",
+    "logging",
+    "sanitize",
+    "pii",
+    "log",
+    "security",
+    "secret-scanning",
+    "pre-commit",
+    "git-hooks"
+  ],
   "scripts": {
     "test": "node --test"
   },
   "engines": {
     "node": ">=18"
   },
-  "repository": { "type": "git", "url": "git+https://github.com/GT-Snix/keyblob.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GT-Snix/keyblob.git"
+  },
   "homepage": "https://github.com/GT-Snix/keyblob#readme",
-  "bugs": { "url": "https://github.com/GT-Snix/keyblob/issues" },
+  "bugs": {
+    "url": "https://github.com/GT-Snix/keyblob/issues"
+  },
   "author": "GT-Snix",
   "license": "MIT"
 }

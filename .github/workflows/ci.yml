@@ -18,4 +18,5 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+      - run: node bin/keyblob.js scan
       - run: npm pack --dry-run
