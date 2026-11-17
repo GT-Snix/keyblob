@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## 1.1.1
+
+- README rewritten in plainer language. No code changes.
+
 ## 1.1.0
 
 - New `keyblob` CLI. `keyblob scan` finds secrets in files git would commit; `--staged` checks only the next commit; `--json` for CI.

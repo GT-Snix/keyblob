@@ -1,106 +1,102 @@
 # keyblob
 
-Keep secrets out of your logs and out of git. `redact()` returns a masked copy of any object so it is safe to log; `keyblob scan` blocks commits that contain API keys or passwords. Zero dependencies, Node.js >= 18.
+Keep your secrets out of your logs, and out of git.
 
-```js
-const { redact } = require('keyblob');   // or: import { redact } from 'keyblob';
+keyblob does two small jobs. `redact()` gives you a copy of any object with the passwords, tokens and keys masked, so you can log it without worrying. `keyblob scan` looks through your files before you commit and stops you if you're about to push an API key to GitHub.
 
-console.log(redact({ user: 'alice', password: 'hunter2', headers: { authorization: 'Bearer abc' } }));
-// { user: 'alice', password: '[REDACTED]', headers: { authorization: '[REDACTED]' } }
-```
-
-Your original object is never modified. Only the copy you log is masked.
+No dependencies. Node 18 or newer.
 
 ```sh
 npm install keyblob
 ```
 
-## Why
+## Logging safely with redact()
 
-Logs are read by more people, copied to more tools and kept longer than your database. `console.log(req)` or `logger.error(err)` is how API keys, passwords and session cookies end up in them. Call `redact()` right before logging, on the data you choose to log, e.g. `redact({ method: req.method, url: req.url, headers: req.headers })`.
+```js
+const { redact } = require('keyblob');   // or: import { redact } from 'keyblob'
 
-A raw Node `req` is not a good input: `req.headers` is a prototype getter and is dropped. The raw header fields (`rawHeaders`, `_header`, `outputData` and similar) are masked whole, so nothing leaks, but you lose the headers.
+console.log(redact({
+  user: 'alice',
+  password: 'hunter2',
+  headers: { authorization: 'Bearer abc' },
+}));
+// { user: 'alice', password: '[REDACTED]', headers: { authorization: '[REDACTED]' } }
+```
 
-## How it decides
+Your original object is left alone. Only the copy you log is masked, so the rest of your app keeps working with the real values.
 
-It looks at **key names**, not values. Keys are split into words on camelCase, `_`, `-`, spaces and digits, and a key is sensitive if one word, or two adjacent words joined, is on the list:
+### Why bother
 
-- **Passwords and secrets:** `password`, `pwd`, `pass`, `passphrase`, `secret`, `credential(s)`
-- **Tokens and auth:** `token`, `jwt`, `bearer`, `authorization`, `auth` (as the whole key), `x-auth`, `signature`, `otp`, `pin`, MFA / verification / reset codes
-- **Keys:** `apikey`, `privatekey`, `accesskey`, `encryptionkey`, `signingkey`, `hmackey`, `masterkey`, `sshkey`, `licensekey`, `sessionkey`, `clientkey`
-- **Sessions and cookies:** `session(s)`, `sessionid`, `sid`, `cookie(s)`
-- **Payment and identity:** `cardnumber`, `creditcard`, `cvv`, `cvc`, `iban`, `accountnumber`, `ssn`
-- **Connection info:** `connectionstring`, `dsn`
+Logs get read by more people than your database does. They get shipped to other services, pasted into Slack, and kept for months. A stray `console.log(req)` or `logger.error(err)` is usually how a session cookie or an API key ends up somewhere it shouldn't. Wrap what you log in `redact()` and that mostly stops happening.
 
-So `accessToken`, `user_password`, `X-API-KEY`, `APIKey`, `password2` and `stripeSigningKey` are caught, while `tokens_used`, `keyboard`, `author`, `primaryKey` and `publicKey` are left alone.
+One tip: log the parts of a request you care about, like `redact({ method: req.method, url: req.url, headers: req.headers })`, rather than the raw Node `req` object. `req.headers` is a getter on the prototype, so it gets dropped if you pass `req` itself. The raw header fields are masked whole in that case, so nothing leaks, but you lose the headers.
 
-A key whose **last word only describes a secret** is kept: `passwordPolicy`, `sessionTimeout`, `tokenType`, `token_count`, `privateKeyPath`, `cookieConsent`. The full list of those words is `count`, `limit`, `timeout`, `ttl`, `length`, `policy`, `strength`, `type`, `enabled`, `required`, `changed`, `at`, `name`, `path`, `consent`, `algorithm`.
+### How it decides what to mask
 
-One value check: a string that **starts with** `scheme://user:password@` has the password masked (`postgres://app:[REDACTED]@db:5432/prod`). That covers `DATABASE_URL`-style config. Other strings are never scanned.
+It goes by the key name, not the value. Each key is split into words (on camelCase, `_`, `-`, spaces and digits), and if one word, or two neighbouring words joined together, is on the list, the value is masked. The list covers:
 
-## Options
+- passwords and secrets: `password`, `pwd`, `pass`, `passphrase`, `secret`, `credential`
+- tokens and auth: `token`, `jwt`, `bearer`, `authorization`, `signature`, `otp`, `pin`, MFA and reset codes, and `auth` when it's the whole key
+- keys: `apikey`, `privatekey`, `accesskey`, `signingkey`, `encryptionkey`, `sshkey` and a few more like them
+- sessions and cookies: `session`, `sessionid`, `sid`, `cookie`
+- payment and identity: `cardnumber`, `cvv`, `iban`, `accountnumber`, `ssn`
+- connection info: `connectionstring`, `dsn`
 
-The defaults will be wrong for some of your keys. Tune them:
+So `accessToken`, `user_password`, `X-API-KEY` and `password2` get masked, while `tokens_used`, `keyboard`, `author` and `primaryKey` don't.
+
+Keys that only describe a secret are kept, because they're useful when you're debugging: `passwordPolicy`, `sessionTimeout`, `tokenType`, `privateKeyPath`. That works when the last word is one of `count`, `limit`, `timeout`, `ttl`, `length`, `policy`, `strength`, `type`, `enabled`, `required`, `changed`, `at`, `name`, `path`, `consent` or `algorithm`.
+
+There's one check on values. A string that starts with `scheme://user:password@` gets its password masked, so `postgres://app:[REDACTED]@db:5432/prod` still tells you which database you were talking to.
+
+### Tuning it
+
+The defaults won't fit every codebase. If you have your own sensitive fields, or a harmless one keeps getting masked, build your own redactor:
 
 ```js
 const { createRedactor } = require('keyblob');
 
 const redact = createRedactor({
-  keys: ['ssnLast4', 'employeeNumber'],   // more sensitive words, matched like the built-ins
-  allow: ['session'],                      // exact keys never masked (still masks sessionId)
+  keys: ['ssnLast4', 'employeeNumber'],  // extra words to treat as sensitive
+  allow: ['session'],                     // exact keys to never mask (sessionId is still masked)
 });
 
 logger.info(redact(payload));
 ```
 
-| Option | Default | Meaning |
+| Option | Default | What it does |
 |---|---|---|
-| `keys` | `[]` | Extra sensitive words. Case-insensitive; match a word, a run of adjacent words, or the whole key. `'ssnLast4'` also masks `tenant_ssn_last4`. |
-| `allow` | `[]` | Keys that are never masked. Exact whole-key match, ignoring case, `_` and `-`. Wins over everything else. |
-| `maxDepth` | `100` | Deeper nesting becomes `'[MaxDepth]'`. |
-| `maxArrayLength` | `100` | Items kept per array; the rest becomes one `'[Truncated: N more items]'` entry. Same default as `console.log`. |
-| `maxNodes` | `10000` | Objects visited per call; the rest becomes `'[Truncated]'`. |
+| `keys` | `[]` | Extra sensitive words, matched the same way as the built-in ones. `'ssnLast4'` also catches `tenant_ssn_last4`. |
+| `allow` | `[]` | Keys that are never masked. Exact match, ignoring case, `_` and `-`. Beats every other rule. |
+| `maxDepth` | `100` | Anything nested deeper becomes `'[MaxDepth]'`. |
+| `maxArrayLength` | `100` | Items kept per array. The rest turn into one `'[Truncated: N more items]'` entry, like `console.log` does. |
+| `maxNodes` | `10000` | Objects visited per call. After that you get `'[Truncated]'`. |
 
-Limits accept a non-negative integer or `Infinity`. Invalid options throw a `TypeError` when the redactor is built, never while logging.
+The limits take a non-negative integer or `Infinity`. A bad option throws a `TypeError` when you create the redactor, never later while you're logging.
 
-`redact(input, options)` also accepts options directly. Prefer `createRedactor` and reuse the result: it keeps a warm cache of key decisions, which is what makes repeated logging fast.
+You can also pass options straight to `redact(input, options)`, but `createRedactor` is faster if you log a lot, because it remembers which keys it has already checked.
 
-## What it handles
+### Messy input
 
-- Circular references become `'[Circular]'`. Shared (non-circular) references are copied normally.
-- Arrays stay arrays; `Date`, `RegExp`, `Buffer`, typed arrays and `ArrayBuffer` pass through as-is.
-- Class instances are walked by their own enumerable fields.
-- Functions become `'[Function]'` (they can carry secret props).
-- `Error` objects keep `name`, `message`, `stack`, `cause` and own props, so `err.config.headers.Authorization` is masked. HTTP client errors (axios etc.) carry `err.request`; its raw header text is masked.
-- A getter that throws, or a hostile Proxy, becomes `'[Unreadable]'`. A sensitive key's getter is never called.
-- Work is bounded by the three limits above, so cyclic, exponential or huge inputs return quickly. **It never throws.**
-- An own `__proto__` key (e.g. from `JSON.parse`) is treated as a normal key.
-- `null`, `undefined`, numbers and other primitives are returned unchanged.
+A logger shouldn't be the thing that crashes your app, so `redact()` never throws. Some details:
 
-## Known limits
+- Circular references come out as `'[Circular]'`. Objects that are shared but not circular are copied normally.
+- `Date`, `RegExp`, `Buffer` and typed arrays are passed through as they are. Class instances are copied field by field.
+- Functions become `'[Function]'`, since they can carry properties too.
+- Errors keep their `name`, `message`, `stack` and `cause`, and their extra fields are masked like anything else. That covers things like `err.config.headers.Authorization` on axios errors.
+- A getter that throws, or a hostile Proxy, becomes `'[Unreadable]'`. The getter on a sensitive key is never even called.
+- Huge or deeply nested input is cut off by the limits above, so it always returns quickly.
 
-Read these. They are deliberate or accepted.
+## Keeping secrets out of git with keyblob scan
 
-- **Free-text strings are not scanned.** A secret inside a message (`"login failed for Bearer abc123"`, or inside `err.message`) is not caught. Only keys, plus the connection-string check above.
-- **Key matching is a heuristic.** It will miss some secrets and mask some harmless fields. Unknown names (`myVendorRef`) and keys without word boundaries (`myapikeyvalue`) are missed. Bare `key` is not masked, because `primaryKey`, `cacheKey` and `sortKey` are everywhere; add yours with `keys`. Plurals not in the list are missed on purpose so `tokens_used` stays readable.
-- **Map and Set contents are dropped** (they come out as `{}`). Nothing leaks, but the data is lost from the log.
-- **Pass-through values are not copied**, and own extra keys on them (e.g. `date.password`) are not checked.
-- **Symbol keys and non-enumerable properties are omitted** from the copy (except Error fields).
-- **Big inputs are truncated** by the limits. A getter that loops forever inside your own code cannot be interrupted.
-- **Node.js only.** It uses `node:util`. Bun and Deno's Node compatibility should work but are not tested; browsers and edge runtimes without Node APIs are not supported.
-- This reduces accidental leaks. It is not a substitute for keeping secrets out of logs at the source.
-
-## Keep secrets out of git: `keyblob scan`
-
-`redact()` protects your logs while the app runs. `keyblob scan` protects your repository before you push: it finds API keys, passwords and private keys in your files and blocks the commit.
+`redact()` covers your logs while the app is running. `keyblob scan` covers the other way secrets usually leak, which is being committed and pushed.
 
 ```sh
 npm install --save-dev keyblob
-npx keyblob hook install        # scan staged files before every git commit
-npx keyblob scan                # scan every file git would commit, any time
+npx keyblob hook install   # check what you're committing, every time you commit
+npx keyblob scan           # check every file in the project, whenever you like
 ```
 
-A blocked commit looks like this. The secret itself is never printed:
+If you try to commit a key, the commit stops and you see where it is. The secret itself is never printed in full:
 
 ```
 keyblob: found 1 possible secret
@@ -108,33 +104,67 @@ keyblob: found 1 possible secret
   index.js:10:23  google-oauth-client-secret  GOCS… (35 chars)
 ```
 
-Fix it by moving the value into an environment variable (a `.env` file listed in `.gitignore`, read with `process.env.NAME` and `node --env-file=.env`). If a real secret was already pushed, **rotate it**: deleting it in a later commit does not remove it from git history.
+The fix is almost always the same. Move the value into a `.env` file, add `.env` to your `.gitignore`, and read it with `process.env.NAME` (Node can load the file for you with `node --env-file=.env app.js`).
 
-What it finds:
+If a real key has already been pushed, change it with whoever issued it. Deleting it in a new commit doesn't remove it from the git history, and bots scan public repos for keys within minutes.
 
-- **Known token formats, by value:** AWS, GitHub, GitLab, Google API keys and OAuth client secrets, OpenAI, Anthropic, Stripe live keys, Slack, npm tokens, JWTs, PEM private keys, and passwords in `scheme://user:pass@host` URLs.
-- **Hardcoded values under sensitive names**, using the same word rules as `redact()`: `clientSecret = "..."`, `"db_password": "..."`, and unquoted `API_TOKEN=...` in `.env`, YAML, INI, TOML and `.npmrc` files. Placeholders (`your-key-here`, `${VAR}`, `<token>`, `****`), env lookups and prose are skipped.
-- **Files that should never be committed:** `.env`, `.env.local` etc. (not `.env.example`), `id_rsa`, `*.key`, `*.p12`, `*.pfx`.
+### What it looks for
 
-False alarm? Put `keyblob-ignore` in a comment on that line, or list paths in a `.keyblobignore` file (gitignore-style globs, e.g. `test/fixtures/`). Inside a git repo the scan follows `.gitignore`, so a correctly ignored `.env` is not reported.
+- Keys it recognises by their format, whatever your variable is called: AWS, GitHub, GitLab, Google (API keys and OAuth client secrets), OpenAI, Anthropic, Stripe live keys, Slack, npm tokens, JWTs, PEM private keys, and passwords inside `user:pass@host` URLs.
+- Values typed straight into code under a sensitive name, like `clientSecret = "..."` or `"db_password": "..."`, using the same word rules as `redact()`. In `.env`, YAML, INI, TOML and `.npmrc` files it also checks unquoted `API_TOKEN=...` lines.
+- Files that shouldn't be in a repo at all: `.env` and `.env.local` (but not `.env.example`), `id_rsa`, `*.key`, `*.p12`, `*.pfx`.
 
-A local hook can be skipped with `git commit --no-verify`, so also run `npx keyblob scan` in CI. It exits `1` when it finds something, `0` when clean, `2` on a usage error; `--json` gives machine-readable output.
+It skips obvious placeholders such as `your-key-here`, `${API_TOKEN}`, `<token>` and `****`, as well as `process.env` lookups and ordinary sentences.
 
-From code: `const { scanText } = require('keyblob/scan')` returns findings for a string; see `src/scan.d.ts`.
+### False alarms
 
-**What no tool can do:** hide a secret from people who can run your code. Anything sent to the browser (frontend JavaScript, a mobile app bundle) can be read by its user, however it is encoded. Keep secrets on your server and let the browser call your server.
+Add a comment containing `keyblob-ignore` to the line, or list files and folders in a `.keyblobignore` file at the root of your project. It uses the same pattern style as `.gitignore`:
 
-## Why not pino's `redact` / fast-redact?
+```
+# fake keys used in tests
+test/fixtures/
+*.snap
+```
 
-If you already use pino, use its built-in redaction: it is fast, path-based and has no false positives, because you list the exact paths (`req.headers.authorization`). keyblob is for when you want logger-independent, name-based redaction that works without listing every path, plus safe handling of messy input (cycles, getters, Errors, Proxies, `__proto__`). The trade-off is that name matching is a heuristic; `keys` and `allow` let you correct it.
+Inside a git repo the scan also respects `.gitignore`, so a `.env` that's properly ignored won't be reported.
+
+### Running it in CI
+
+Anyone can skip a local hook with `git commit --no-verify`, so it's worth running the scan in CI as well:
+
+```yaml
+- run: npx keyblob scan
+```
+
+It exits with `1` when it finds something, `0` when the project is clean and `2` if the command was used wrong. Add `--json` if you want to process the results yourself. You can also call the scanner from code with `require('keyblob/scan')`, which gives you `scanText()` and `scanFileName()`.
+
+### What it can't do
+
+No tool can hide a secret from someone who runs your code. Anything your app sends to the browser, like frontend JavaScript or a mobile app bundle, can be read by the person using it, however you encode it. If the browser needs to talk to a paid API, have it go through your own server and keep the key there.
+
+## Known limits
+
+I'd rather you know these up front:
+
+- `redact()` doesn't read free text. A secret inside a message, like `"login failed for Bearer abc123"` or inside `err.message`, isn't caught. Only key names and the connection-string check are.
+- Name matching is a heuristic, in both `redact()` and `scan`. It will miss some secrets and occasionally mask something harmless. Unusual names like `myVendorRef`, or keys with no word breaks like `myapikeyvalue`, are missed. A bare `key` isn't masked, because `primaryKey`, `cacheKey` and `sortKey` are everywhere. Use `keys` to add your own.
+- Map and Set contents come out as `{}`. Nothing leaks, but you lose that data from the log.
+- Symbol keys and non-enumerable properties aren't copied, except for the Error fields listed above.
+- It's built for Node. It should work under Bun and Deno's Node compatibility but isn't tested there, and it won't run in the browser.
+- None of this replaces keeping secrets out of your code in the first place. It's a safety net.
+
+## Should I use this or pino's redact?
+
+If you already use pino, its built-in `redact` option is great. It's fast and exact, because you list the precise paths to mask (`req.headers.authorization`). keyblob is for when you'd rather not maintain that list, want something that works with any logger, or log messy objects like errors and class instances. The cost is that matching by name is a guess, which is why `keys` and `allow` exist.
 
 ## API
 
-- `redact(input, options?)` returns the redacted copy, typed `unknown` because its shape differs from the input.
+- `redact(input, options?)` returns the masked copy. It's typed `unknown` in TypeScript because the shape can differ from the input.
 - `createRedactor(options?)` returns a reusable `(input) => unknown` function.
-- `REDACTED` is the mask constant (`'[REDACTED]'`).
+- `REDACTED` is the mask string, `'[REDACTED]'`.
+- `require('keyblob/scan')` gives you `scanText(text, { filename })` and `scanFileName(filename)`.
 
-TypeScript types are included.
+TypeScript types are included for everything.
 
 ## License
 

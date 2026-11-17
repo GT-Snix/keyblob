@@ -1,6 +1,6 @@
 {
   "name": "keyblob",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Keep secrets out of your logs (redact) and out of git (scan + pre-commit hook). Zero dependencies.",
   "main": "src/index.js",
   "types": "src/index.d.ts",
